@@ -132,3 +132,41 @@ SUPPORTED_METADATA_PROVIDERS: list[str] = [
     "NVIDIA NIM",
     "OpenCode / Custom Endpoint",
 ]
+
+# Shorts & Vertical Video Configuration
+SHORTS_REFRAME_MODES: list[str] = [
+    "Blurred Background (Recommended)",
+    "Smart Center Crop",
+    "Fit with Letterbox",
+]
+DEFAULT_SHORTS_REFRAME_MODE: str = "Blurred Background (Recommended)"
+
+SHORTS_DURATION_OPTIONS: list[str] = [
+    "Under 60s (YouTube Shorts & TikTok)",
+    "Under 90s (Instagram Reels)",
+    "Full Take Duration",
+]
+DEFAULT_SHORTS_DURATION_OPTION: str = "Under 60s (YouTube Shorts & TikTok)"
+
+SHORTS_SUBTITLE_PRESETS: list[str] = [
+    "TikTok Yellow (Vertical Safe-Zone)",
+    "Clean White (Vertical Safe-Zone)",
+    "Minimalist Dark Box (Vertical Safe-Zone)",
+]
+DEFAULT_SHORTS_SUBTITLE_PRESET: str = "TikTok Yellow (Vertical Safe-Zone)"
+
+# Multi-Platform Social Media Publishing
+SUPPORTED_SOCIAL_PLATFORMS: list[str] = [
+    "YouTube Shorts",
+    "TikTok",
+    "Instagram Reels",
+    "X (Twitter)",
+    "LinkedIn",
+]
+
+DEFAULT_YOUTUBE_API_KEY: str = os.getenv("YOUTUBE_API_KEY", "")
+DEFAULT_TIKTOK_ACCESS_TOKEN: str = os.getenv("TIKTOK_ACCESS_TOKEN", "")
+DEFAULT_INSTAGRAM_ACCESS_TOKEN: str = os.getenv("INSTAGRAM_ACCESS_TOKEN", "")
+DEFAULT_TWITTER_API_KEY: str = os.getenv("TWITTER_API_KEY", "")
+DEFAULT_LINKEDIN_ACCESS_TOKEN: str = os.getenv("LINKEDIN_ACCESS_TOKEN", "")
+

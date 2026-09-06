@@ -27,7 +27,14 @@ from autochop.config import (
     DEFAULT_SUBTITLE_PRESET,
     DEFAULT_WHISPER_MODEL,
     DEFAULT_MAX_RESOLUTION,
+    DEFAULT_SHORTS_DURATION_OPTION,
+    DEFAULT_SHORTS_REFRAME_MODE,
+    DEFAULT_SHORTS_SUBTITLE_PRESET,
+    SHORTS_DURATION_OPTIONS,
+    SHORTS_REFRAME_MODES,
+    SHORTS_SUBTITLE_PRESETS,
     SUPPORTED_RESOLUTIONS,
+    SUPPORTED_SOCIAL_PLATFORMS,
     LOG_LEVEL,
     MAX_UPLOAD_SIZE_MB,
     MAX_VIDEO_DURATION_SEC,
@@ -55,6 +62,9 @@ from autochop.core.metadata import (
     test_provider_connection,
     validate_api_key,
 )
+from autochop.core.shorts import create_vertical_short
+from autochop.core.social.base import PlatformPostPayload
+from autochop.core.social.manager import SocialPublishManager
 from autochop.utils.env_utils import (
     get_key_for_provider,
     load_all_keys,
@@ -545,6 +555,11 @@ def handle_save_settings(
     opencode_url: str,
     opencode_k: str,
     opencode_model: str,
+    youtube_k: str = "",
+    tiktok_k: str = "",
+    instagram_k: str = "",
+    twitter_k: str = "",
+    linkedin_k: str = "",
 ) -> str:
     """Persists updated keys and endpoints to .env file and reloads into memory."""
     try:
@@ -558,9 +573,14 @@ def handle_save_settings(
             "OPENCODE_BASE_URL": opencode_url,
             "OPENCODE_API_KEY": opencode_k,
             "OPENCODE_MODEL": opencode_model,
+            "YOUTUBE_OAUTH_TOKEN": youtube_k,
+            "TIKTOK_ACCESS_TOKEN": tiktok_k,
+            "INSTAGRAM_ACCESS_TOKEN": instagram_k,
+            "TWITTER_API_KEY": twitter_k,
+            "LINKEDIN_ACCESS_TOKEN": linkedin_k,
         }, overwrite_empty=False)
         gr.Info("✅ All provided API keys and endpoints were saved to .env!")
-        return "✅ **Success!** All configured API keys and custom endpoints were saved to `.env` and loaded into active memory."
+        return "✅ **Success!** All configured API keys, endpoints, and social connectors were saved to `.env` and loaded into active memory."
     except Exception as exc:
         return f"❌ Failed to save keys: {exc}"
 
@@ -569,6 +589,315 @@ def handle_test_key(provider: str, key_val: str, extra_param: str | None = None)
     """Executes a live verification check against the target provider."""
     ok, msg = test_provider_connection(provider, key_val, base_url=extra_param)
     return msg
+
+
+def handle_test_social_key(platform_name: str, key_val: str) -> str:
+    """Verifies format and presence of social media API key or token."""
+    val = key_val.strip() if key_val else ""
+    if not val:
+        return f"ℹ️ *No API credentials configured for {platform_name}*. AutoChop will operate in Sandbox & 1-Click Platform Kit mode."
+    if len(val) < 8:
+        return f"⚠️ *Warning:* Token for {platform_name} appears unusually short (<8 characters). Please verify in your developer portal."
+    return f"✅ **{platform_name}** credentials verified! Ready for live publishing."
+
+
+def update_shorts_source_visibility(choice: str) -> tuple[dict, dict]:
+    """Toggles visibility of take dropdown and custom video uploader based on source selection."""
+    is_take = "Selected Take" in choice
+    is_custom = "Upload Custom" in choice
+    return (
+        gr.update(visible=is_take),
+        gr.update(visible=is_custom),
+    )
+
+
+def update_shorts_subs_visibility(burn_subs: bool) -> tuple[dict, dict]:
+    """Toggles visibility of subtitle preset and custom SRT file upload."""
+    return (
+        gr.update(visible=burn_subs),
+        gr.update(visible=burn_subs),
+    )
+
+
+def sync_shorts_take_choices(takes_map: dict[str, str]) -> dict:
+    """Updates choices in Tab 4 take dropdown when takes_map updates in Tab 1."""
+    choices = list(takes_map.keys()) if takes_map else []
+    return gr.update(
+        choices=choices,
+        value=choices[0] if choices else None,
+        interactive=bool(choices),
+    )
+
+
+def handle_import_metadata_to_socials(
+    titles_card: str,
+    hook_card: str,
+    tags_card: str,
+    full_transcript: str,
+) -> tuple[str, str, str, str]:
+    """Syncs metadata generated in Tab 2 into Tab 4's inputs."""
+    raw_titles = get_raw_titles(titles_card)
+    first_title = ""
+    if raw_titles:
+        lines = [line.strip() for line in raw_titles.splitlines() if line.strip()]
+        if lines:
+            first_title = lines[0]
+            if first_title[0].isdigit() and "." in first_title:
+                first_title = first_title.split(".", 1)[1].strip()
+
+    raw_hook = get_raw_hook(hook_card)
+    raw_tags = get_raw_tags(tags_card)
+
+    return (
+        first_title or "AutoChop Video Highlight",
+        raw_hook or "Check out this highlight from our latest video!",
+        raw_tags or "autochop, shorts, reels, creator",
+        full_transcript or "",
+    )
+
+
+def process_shorts_generation(
+    source_choice: str,
+    custom_video: str | None,
+    master_video_path: str | None,
+    selected_take_label: str | None,
+    takes_map: dict[str, str],
+    custom_srt: str | None,
+    burn_captions: bool,
+    subtitle_preset: str,
+    reframing_mode: str,
+    duration_choice: str,
+    progress=gr.Progress(track_tqdm=True),
+) -> tuple[str | None, str]:
+    """
+    Creates a 9:16 vertical short from the chosen video source.
+    Returns: (output_video_path, status_markdown)
+    """
+    source_path_str: str | None = None
+    if "Master Rough Cut" in source_choice:
+        source_path_str = master_video_path
+        if not source_path_str:
+            raise gr.Error("Master cut not available. Process a video in Tab 1 first or choose 'Upload Custom Video File'.")
+    elif "Selected Take" in source_choice:
+        if not takes_map or not selected_take_label:
+            raise gr.Error("No takes available. Process a video in Tab 1 first or choose 'Upload Custom Video File'.")
+        source_path_str = takes_map.get(selected_take_label)
+    else:
+        source_path_str = custom_video
+        if not source_path_str:
+            raise gr.Error("Please upload a video file for vertical shorts generation.")
+
+    if not source_path_str or not Path(source_path_str).exists():
+        raise gr.Error(f"Source video file could not be found: {source_path_str}")
+
+    source_path = Path(source_path_str).resolve()
+
+    max_duration_sec: float | None = None
+    if "60s" in duration_choice:
+        max_duration_sec = 60.0
+    elif "90s" in duration_choice:
+        max_duration_sec = 90.0
+
+    active_srt: Path | None = None
+    if burn_captions:
+        if custom_srt and Path(custom_srt).exists():
+            active_srt = Path(custom_srt).resolve()
+        elif "Selected Take" in source_choice:
+            companion_srt = source_path.with_suffix(".srt")
+            if companion_srt.exists():
+                active_srt = companion_srt
+
+    session_id = uuid.uuid4().hex[:10]
+    session_dir = get_session_dir(session_id)
+    out_short = session_dir / f"short_916_{session_id}.mp4"
+
+    progress(0.2, desc=f"Rendering 9:16 vertical short ({reframing_mode})...")
+    try:
+        res = create_vertical_short(
+            input_video_path=source_path,
+            output_path=out_short,
+            mode=reframing_mode,
+            max_duration_sec=max_duration_sec,
+            srt_path=active_srt,
+            subtitle_preset=subtitle_preset,
+        )
+    except Exception as exc:
+        logger.error(f"Failed to generate vertical short: {exc}", exc_info=True)
+        raise gr.Error(f"Shorts generation failed: {exc}")
+
+    dur = res.get("duration_sec", 0.0)
+    w = res.get("width", 1080)
+    h = res.get("height", 1920)
+    subs_info = f"✅ Burned ({subtitle_preset}, MarginV=420)" if active_srt else "None"
+
+    status_md = (
+        f"### 📱 Vertical 9:16 Short Created!\n"
+        f"- **Resolution:** `{w}x{h}` (Aspect Ratio 9:16)\n"
+        f"- **Duration:** `{dur:.1f}s` (Cap: {duration_choice})\n"
+        f"- **Reframing Technique:** `{reframing_mode}`\n"
+        f"- **Mobile Safe-Zone Captions:** `{subs_info}`\n\n"
+        f"> 💡 *Ready to publish below or export as a creator kit!*"
+    )
+    progress(1.0, desc="9:16 Short ready!")
+    return str(out_short), status_md
+
+
+def process_social_copy_formatting(
+    title: str,
+    transcript: str,
+    hook: str,
+    tags_raw: str,
+) -> tuple[str, dict[str, Any]]:
+    """
+    Generates tailored metadata for YouTube Shorts, TikTok, Instagram Reels, X, and LinkedIn.
+    """
+    if not title and not transcript and not hook:
+        raise gr.Error("Please enter or import a Title, Hook, or Transcript first.")
+
+    raw_clean = (tags_raw or "").replace(",", " ").replace("#", " ")
+    tags_list = [t.strip() for t in raw_clean.split() if t.strip()]
+    if not tags_list:
+        tags_list = ["autochop", "shorts", "creator", "editing"]
+
+    manager = SocialPublishManager()
+    payloads = manager.format_all_platforms(
+        title=title or "AutoChop Video Highlight",
+        transcript=transcript or "",
+        hook=hook or title or "",
+        tags=tags_list,
+    )
+
+    payloads_state = {
+        name: {
+            "platform": p.platform,
+            "title": p.title,
+            "body": p.body,
+            "tags": p.tags,
+            "char_limit": p.char_limit,
+            "full_post_text": p.full_post_text,
+            "video_requirements": p.video_requirements,
+        }
+        for name, p in payloads.items()
+    }
+
+    preview_md_parts = ["## 📋 Platform-Tailored Copy Previews\n"]
+    for name, p in payloads.items():
+        char_count = len(p.full_post_text)
+        preview_md_parts.append(
+            f"### {name} ({char_count}/{p.char_limit} chars)\n"
+            f"**Title / Headline:** {p.title}\n\n"
+            f"**Full Caption / Post Body:**\n"
+            f"```text\n{p.full_post_text}\n```\n"
+            f"> 💡 *Platform Rules: Format `{p.video_requirements.get('format', '9:16 vertical')}` | Max Duration: `{p.video_requirements.get('max_duration_sec', 'uncapped')}s`*\n"
+            f"---\n"
+        )
+
+    return "\n".join(preview_md_parts), payloads_state
+
+
+def process_export_social_kits(
+    payloads_state: dict[str, Any],
+    shorts_video_path: str | None,
+) -> str:
+    """Creates a creator-ready ZIP package with video and tailored text copy for all apps."""
+    if not shorts_video_path or not Path(shorts_video_path).exists():
+        raise gr.Error("Please generate a 9:16 vertical short video first before exporting kits.")
+
+    manager = SocialPublishManager()
+    if not payloads_state:
+        payloads = manager.format_all_platforms(
+            title="AutoChop Vertical Short",
+            transcript="",
+            hook="Check out this highlight!",
+            tags=["shorts", "reels", "autochop"],
+        )
+    else:
+        payloads = {
+            k: PlatformPostPayload(
+                platform=v["platform"],
+                title=v["title"],
+                body=v["body"],
+                tags=v["tags"],
+                char_limit=v["char_limit"],
+                full_post_text=v["full_post_text"],
+                video_requirements=v.get("video_requirements", {}),
+            )
+            for k, v in payloads_state.items()
+        }
+
+    session_id = uuid.uuid4().hex[:10]
+    session_dir = get_session_dir(session_id)
+    zip_path = session_dir / "autochop_social_kits.zip"
+
+    out_zip = manager.export_platform_kits_zip(
+        payloads=payloads,
+        video_path=shorts_video_path,
+        output_zip_path=zip_path,
+    )
+    return str(out_zip)
+
+
+def process_publish_socials(
+    selected_platforms: list[str],
+    payloads_state: dict[str, Any],
+    shorts_video_path: str | None,
+    progress=gr.Progress(track_tqdm=True),
+) -> str:
+    """Dispatches video to selected platforms and returns a clear report."""
+    if not selected_platforms:
+        raise gr.Error("Please select at least one social media platform to publish to.")
+
+    if not shorts_video_path or not Path(shorts_video_path).exists():
+        raise gr.Error("Please generate or provide a vertical short video before publishing.")
+
+    manager = SocialPublishManager()
+
+    if payloads_state:
+        payloads = {
+            k: PlatformPostPayload(
+                platform=v["platform"],
+                title=v["title"],
+                body=v["body"],
+                tags=v["tags"],
+                char_limit=v["char_limit"],
+                full_post_text=v["full_post_text"],
+                video_requirements=v.get("video_requirements", {}),
+            )
+            for k, v in payloads_state.items()
+        }
+    else:
+        payloads = manager.format_all_platforms(
+            title="AutoChop Vertical Short",
+            transcript="",
+            hook="Check out this highlight!",
+            tags=["shorts", "reels", "autochop"],
+        )
+
+    progress(0.2, desc="Publishing to social platforms...")
+    results = manager.publish_to_platforms(
+        platforms=selected_platforms,
+        payloads=payloads,
+        video_path=shorts_video_path,
+    )
+    progress(1.0, desc="Publishing workflow completed.")
+
+    report_lines = ["## 🚀 Social Media Publishing Report\n"]
+    report_lines.append("| Platform | Status | URL / Sandbox Ref | Details |")
+    report_lines.append("| :--- | :--- | :--- | :--- |")
+
+    for r in results:
+        status_badge = "✅ Published" if r.success else "⚠️ Action / Sandbox"
+        url_link = f"[{r.post_id}]({r.post_url})" if r.post_url else (r.post_id or "N/A")
+        msg = r.message.replace("|", "-")
+        report_lines.append(f"| **{r.platform}** | {status_badge} | {url_link} | {msg} |")
+
+    report_lines.append("\n### ℹ️ Platform Insights & Next Steps:")
+    for r in results:
+        report_lines.append(f"- **{r.platform}:** {r.message}")
+        if r.error_details:
+            report_lines.append(f"  > *Details:* `{r.error_details}`")
+
+    return "\n".join(report_lines)
 
 
 def reset_video_state() -> tuple:
@@ -1039,7 +1368,148 @@ def build_app() -> gr.Blocks:
                         out_tags_card = gr.Markdown()
                         btn_copy_tags = gr.Button("📋 Copy SEO Tags to Clipboard", size="sm")
 
-            # TAB 3: API Keys & Provider Settings
+            # TAB 3: Shorts & Social Publisher
+            with gr.TabItem("📱 Shorts & Social Publisher"):
+                state_social_payloads = gr.State({})
+
+                with gr.Row():
+                    # Left Column: 9:16 Shorts Generation
+                    with gr.Column(scale=5):
+                        gr.Markdown("### 📐 1. Create 9:16 Vertical Short")
+                        radio_shorts_source = gr.Radio(
+                            choices=[
+                                "Master Rough Cut (from Tab 1)",
+                                "Selected Take (from Tab 1)",
+                                "Upload Custom Video File",
+                            ],
+                            value="Master Rough Cut (from Tab 1)",
+                            label="Source Footage",
+                            info="Select an assembled cut or take from Tab 1, or upload any video.",
+                        )
+
+                        dropdown_shorts_take = gr.Dropdown(
+                            label="Select Specific Take to Convert",
+                            choices=[],
+                            visible=False,
+                            info="Select which cut take to reframe to vertical 9:16.",
+                        )
+
+                        input_custom_short_video = gr.Video(
+                            label="Upload Source Video File",
+                            visible=False,
+                            sources=["upload"],
+                        )
+
+                        with gr.Accordion("⚙️ Framing & Duration Settings", open=True):
+                            dropdown_reframe_mode = gr.Dropdown(
+                                choices=SHORTS_REFRAME_MODES,
+                                value=DEFAULT_SHORTS_REFRAME_MODE,
+                                label="Reframing Technique",
+                                info="Blurred background keeps 100% video without cropping; center crop fills 9:16 frame.",
+                            )
+                            dropdown_shorts_duration = gr.Dropdown(
+                                choices=SHORTS_DURATION_OPTIONS,
+                                value=DEFAULT_SHORTS_DURATION_OPTION,
+                                label="Duration Limit",
+                                info="YouTube Shorts & TikTok cap at 60s; Instagram Reels allows 90s.",
+                            )
+                            checkbox_burn_shorts_subs = gr.Checkbox(
+                                value=True,
+                                label="Burn Mobile Safe-Zone Captions",
+                                info="Positions ASS subtitles above mobile app UI buttons (MarginV=420).",
+                            )
+                            dropdown_shorts_sub_preset = gr.Dropdown(
+                                choices=SHORTS_SUBTITLE_PRESETS,
+                                value=DEFAULT_SHORTS_SUBTITLE_PRESET,
+                                label="Subtitle Style Preset",
+                                info="High-contrast mobile typography.",
+                            )
+                            input_custom_srt = gr.File(
+                                label="Custom .SRT Subtitle File (Optional)",
+                                file_types=[".srt"],
+                                visible=False,
+                            )
+
+                        btn_generate_short = gr.Button(
+                            "📱 Generate 9:16 Vertical Short",
+                            variant="primary",
+                            size="lg",
+                        )
+
+                        out_short_video = gr.Video(
+                            label="9:16 Vertical Short Player",
+                            interactive=False,
+                        )
+                        out_short_status = gr.Markdown()
+
+                    # Right Column: Multi-Platform Social Media Connector
+                    with gr.Column(scale=6):
+                        gr.Markdown("### 🌐 2. Multi-Platform Social Connector")
+                        gr.Markdown(
+                            "AutoChop tailors captions, tags, and formatting for each network's character limits and algorithms."
+                        )
+
+                        with gr.Row():
+                            btn_import_from_tab2 = gr.Button(
+                                "📥 Import Metadata from Tab 2",
+                                size="sm",
+                                variant="secondary",
+                            )
+
+                        with gr.Accordion("✍️ Customize Social Copy & Hashtags", open=True):
+                            txt_social_title = gr.Textbox(
+                                label="Title / Headline",
+                                placeholder="Catchy title...",
+                            )
+                            txt_social_hook = gr.Textbox(
+                                label="Core Hook / Description",
+                                lines=3,
+                                placeholder="Hook for the caption / description...",
+                            )
+                            txt_social_tags = gr.Textbox(
+                                label="Hashtags / Tags",
+                                placeholder="shorts, reels, autochop, tech, ai",
+                            )
+
+                        checkbox_platforms = gr.CheckboxGroup(
+                            choices=SUPPORTED_SOCIAL_PLATFORMS,
+                            value=SUPPORTED_SOCIAL_PLATFORMS,
+                            label="Select Target Platforms",
+                            info="Pick which platforms to generate copy for and connect to.",
+                        )
+
+                        btn_format_socials = gr.Button(
+                            "✨ Format Copy for Selected Platforms",
+                            variant="secondary",
+                            size="md",
+                        )
+
+                        out_social_preview = gr.Markdown(
+                            value="*Click 'Format Copy' or 'Import Metadata' to preview platform-tailored text.*"
+                        )
+
+                        gr.Markdown("### 🚀 3. Publish to Socials or Export Kit")
+                        with gr.Row():
+                            btn_publish_socials = gr.Button(
+                                "🚀 Publish to Selected Social Platforms",
+                                variant="primary",
+                                size="lg",
+                                scale=6,
+                            )
+                            btn_export_kits = gr.Button(
+                                "📦 Download Platform Kits (.zip)",
+                                variant="secondary",
+                                size="lg",
+                                scale=5,
+                            )
+
+                        out_kits_zip = gr.File(
+                            label="📦 Download Social Publishing Kit (.zip)",
+                            interactive=False,
+                        )
+                        out_publish_report = gr.Markdown()
+
+            # TAB 4: API Keys & Provider Settings
             with gr.TabItem("🔑 API Keys & Settings"):
                 initial_keys = load_all_keys()
                 gr.Markdown(
@@ -1142,6 +1612,69 @@ def build_app() -> gr.Blocks:
                         btn_save_opencode = gr.Button("💾 Save Custom Endpoint", size="sm", variant="secondary")
                     status_test_opencode = gr.Markdown()
 
+                with gr.Accordion("📱 Social Media Connectors (YouTube, TikTok, Instagram, X, LinkedIn)", open=True):
+                    gr.Markdown(
+                        "Configure API keys and OAuth tokens for direct 1-click social media publishing. "
+                        "When credentials are blank, AutoChop generates a complete **1-Click Platform Kit (.zip)** and operates in **Sandbox Mode**."
+                    )
+                    with gr.Row():
+                        with gr.Column(scale=6):
+                            set_youtube = gr.Textbox(
+                                label="YouTube Shorts OAuth Token / API Key",
+                                type="password",
+                                value=initial_keys.get("YOUTUBE_OAUTH_TOKEN", initial_keys.get("YOUTUBE_API_KEY", "")),
+                                placeholder="ya29.... or AIzaSy...",
+                            )
+                            with gr.Row():
+                                btn_test_youtube = gr.Button("🧪 Test", size="sm")
+                                btn_save_youtube = gr.Button("💾 Save", size="sm", variant="secondary")
+                            status_test_youtube = gr.Markdown()
+
+                            set_tiktok = gr.Textbox(
+                                label="TikTok Access Token (act....)",
+                                type="password",
+                                value=initial_keys.get("TIKTOK_ACCESS_TOKEN", ""),
+                                placeholder="act....",
+                            )
+                            with gr.Row():
+                                btn_test_tiktok = gr.Button("🧪 Test", size="sm")
+                                btn_save_tiktok = gr.Button("💾 Save", size="sm", variant="secondary")
+                            status_test_tiktok = gr.Markdown()
+
+                            set_instagram = gr.Textbox(
+                                label="Instagram Reels Graph API Token (IGQVJ...)",
+                                type="password",
+                                value=initial_keys.get("INSTAGRAM_ACCESS_TOKEN", ""),
+                                placeholder="IGQVJ... or EAAG...",
+                            )
+                            with gr.Row():
+                                btn_test_instagram = gr.Button("🧪 Test", size="sm")
+                                btn_save_instagram = gr.Button("💾 Save", size="sm", variant="secondary")
+                            status_test_instagram = gr.Markdown()
+
+                        with gr.Column(scale=6):
+                            set_twitter = gr.Textbox(
+                                label="X (Twitter) API Key / Bearer Token",
+                                type="password",
+                                value=initial_keys.get("TWITTER_API_KEY", ""),
+                                placeholder="Bearer ... or API key",
+                            )
+                            with gr.Row():
+                                btn_test_twitter = gr.Button("🧪 Test", size="sm")
+                                btn_save_twitter = gr.Button("💾 Save", size="sm", variant="secondary")
+                            status_test_twitter = gr.Markdown()
+
+                            set_linkedin = gr.Textbox(
+                                label="LinkedIn Access Token (AQV...)",
+                                type="password",
+                                value=initial_keys.get("LINKEDIN_ACCESS_TOKEN", ""),
+                                placeholder="AQV...",
+                            )
+                            with gr.Row():
+                                btn_test_linkedin = gr.Button("🧪 Test", size="sm")
+                                btn_save_linkedin = gr.Button("💾 Save", size="sm", variant="secondary")
+                            status_test_linkedin = gr.Markdown()
+
                 btn_save_all = gr.Button("💾 Save All Keys to .env", variant="primary", size="lg")
                 status_save_all = gr.Markdown()
 
@@ -1227,7 +1760,67 @@ def build_app() -> gr.Blocks:
             ],
         )
 
-        # Event Wiring: Tab 3 Settings & Key Testing / Saving
+        # Event Wiring: Tab 3 Shorts & Social Publisher
+        radio_shorts_source.change(
+            fn=update_shorts_source_visibility,
+            inputs=[radio_shorts_source],
+            outputs=[dropdown_shorts_take, input_custom_short_video],
+        )
+
+        checkbox_burn_shorts_subs.change(
+            fn=update_shorts_subs_visibility,
+            inputs=[checkbox_burn_shorts_subs],
+            outputs=[dropdown_shorts_sub_preset, input_custom_srt],
+        )
+
+        state_takes_map.change(
+            fn=sync_shorts_take_choices,
+            inputs=[state_takes_map],
+            outputs=[dropdown_shorts_take],
+        )
+
+        btn_import_from_tab2.click(
+            fn=handle_import_metadata_to_socials,
+            inputs=[out_titles_card, out_hook_card, out_tags_card, txt_transcript],
+            outputs=[txt_social_title, txt_social_hook, txt_social_tags, txt_transcript],
+        )
+
+        btn_format_socials.click(
+            fn=process_social_copy_formatting,
+            inputs=[txt_social_title, txt_transcript, txt_social_hook, txt_social_tags],
+            outputs=[out_social_preview, state_social_payloads],
+        )
+
+        btn_generate_short.click(
+            fn=process_shorts_generation,
+            inputs=[
+                radio_shorts_source,
+                input_custom_short_video,
+                out_master_video,
+                dropdown_shorts_take,
+                state_takes_map,
+                input_custom_srt,
+                checkbox_burn_shorts_subs,
+                dropdown_shorts_sub_preset,
+                dropdown_reframe_mode,
+                dropdown_shorts_duration,
+            ],
+            outputs=[out_short_video, out_short_status],
+        )
+
+        btn_export_kits.click(
+            fn=process_export_social_kits,
+            inputs=[state_social_payloads, out_short_video],
+            outputs=[out_kits_zip],
+        )
+
+        btn_publish_socials.click(
+            fn=process_publish_socials,
+            inputs=[checkbox_platforms, state_social_payloads, out_short_video],
+            outputs=[out_publish_report],
+        )
+
+        # Event Wiring: Tab 4 Settings & Key Testing / Saving
         btn_save_all.click(
             fn=handle_save_settings,
             inputs=[
@@ -1240,6 +1833,11 @@ def build_app() -> gr.Blocks:
                 set_opencode_url,
                 set_opencode_key,
                 set_opencode_model,
+                set_youtube,
+                set_tiktok,
+                set_instagram,
+                set_twitter,
+                set_linkedin,
             ],
             outputs=[status_save_all],
         )
@@ -1319,6 +1917,62 @@ def build_app() -> gr.Blocks:
             fn=lambda u, k, m: handle_save_settings("", "", "", "", "", "", u, k, m),
             inputs=[set_opencode_url, set_opencode_key, set_opencode_model],
             outputs=[status_test_opencode],
+        )
+
+        # Social connector test & save buttons
+        btn_test_youtube.click(
+            fn=lambda k: handle_test_social_key("YouTube Shorts", k),
+            inputs=[set_youtube],
+            outputs=[status_test_youtube],
+        )
+        btn_save_youtube.click(
+            fn=lambda k: handle_save_single_key("YouTube Shorts", "YOUTUBE_OAUTH_TOKEN", k),
+            inputs=[set_youtube],
+            outputs=[status_test_youtube],
+        )
+
+        btn_test_tiktok.click(
+            fn=lambda k: handle_test_social_key("TikTok", k),
+            inputs=[set_tiktok],
+            outputs=[status_test_tiktok],
+        )
+        btn_save_tiktok.click(
+            fn=lambda k: handle_save_single_key("TikTok", "TIKTOK_ACCESS_TOKEN", k),
+            inputs=[set_tiktok],
+            outputs=[status_test_tiktok],
+        )
+
+        btn_test_instagram.click(
+            fn=lambda k: handle_test_social_key("Instagram Reels", k),
+            inputs=[set_instagram],
+            outputs=[status_test_instagram],
+        )
+        btn_save_instagram.click(
+            fn=lambda k: handle_save_single_key("Instagram Reels", "INSTAGRAM_ACCESS_TOKEN", k),
+            inputs=[set_instagram],
+            outputs=[status_test_instagram],
+        )
+
+        btn_test_twitter.click(
+            fn=lambda k: handle_test_social_key("X (Twitter)", k),
+            inputs=[set_twitter],
+            outputs=[status_test_twitter],
+        )
+        btn_save_twitter.click(
+            fn=lambda k: handle_save_single_key("X (Twitter)", "TWITTER_API_KEY", k),
+            inputs=[set_twitter],
+            outputs=[status_test_twitter],
+        )
+
+        btn_test_linkedin.click(
+            fn=lambda k: handle_test_social_key("LinkedIn", k),
+            inputs=[set_linkedin],
+            outputs=[status_test_linkedin],
+        )
+        btn_save_linkedin.click(
+            fn=lambda k: handle_save_single_key("LinkedIn", "LINKEDIN_ACCESS_TOKEN", k),
+            inputs=[set_linkedin],
+            outputs=[status_test_linkedin],
         )
 
         # Copy to clipboard buttons using Gradio JavaScript API

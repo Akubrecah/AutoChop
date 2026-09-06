@@ -5,7 +5,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/Akubrecah/AutoChop/actions"><img src="https://img.shields.io/badge/tests-19%20passed-brightgreen.svg" alt="Tests" /></a>
+  <a href="https://github.com/Akubrecah/AutoChop/actions"><img src="https://img.shields.io/badge/tests-30%20passed-brightgreen.svg" alt="Tests" /></a>
   <a href="https://www.python.org/downloads/"><img src="https://img.shields.io/badge/python-3.10%20%7C%203.11-blue.svg" alt="Python 3.10+" /></a>
   <a href="https://ffmpeg.org/"><img src="https://img.shields.io/badge/media-FFmpeg%20%E2%89%A5%205.0-red.svg" alt="FFmpeg" /></a>
   <a href="https://github.com/SYSTRAN/faster-whisper"><img src="https://img.shields.io/badge/ASR-faster--whisper%20(CTranslate2)-orange.svg" alt="faster-whisper" /></a>
@@ -26,7 +26,8 @@
 6. [Step-by-Step Usage Guide](#-step-by-step-usage-guide)
    - [Tab 1: Video Cuts & Captions](#tab-1-video-cuts--captions)
    - [Tab 2: Title & Chapter Studio](#tab-2-title--chapter-studio)
-   - [Tab 3: API Keys & Provider Settings](#tab-3-api-keys--provider-settings)
+   - [Tab 3: Shorts & Social Publisher](#tab-3-shorts--social-publisher)
+   - [Tab 4: API Keys & Provider Settings](#tab-4-api-keys--provider-settings)
 7. [Tunable Parameters & Configuration](#-tunable-parameters--configuration)
 8. [Testing & Quality Assurance](#-testing--quality-assurance)
 9. [Multi-Provider AI Hub & Offline Heuristics](#-multi-provider-ai-hub--offline-heuristics)
@@ -94,24 +95,55 @@ Existing cloud-based video editing SaaS tools charge expensive monthly subscript
   - `subtitles/`: Time-aligned `.srt` files for every take and the master video.
   - `edit_manifest.md`: Comprehensive GitHub Markdown manifest detailing take durations, timestamps, and cut statistics.
 
+### 7. 📱 9:16 Vertical Shorts & Multi-Platform Social Publisher
+- **Vertical Re-framing Engine (1080x1920):** Converts landscape or square cuts into vertical mobile video with 3 algorithmic framing styles:
+  - **Blurred Background (Recommended):** High-aesthetic blurred video background with 100% visible, centered foreground footage (standard for high-end podcasts and vlogs).
+  - **Smart Center Crop:** Crops tight into the 9:16 action center.
+  - **Letterbox:** Clean pillar/letterboxing with uniform aspect ratio maintenance.
+- **Mobile UI Safe-Zone Subtitle Positioning:** Positions ASS subtitles in the safe vertical reading window (`MarginV=420`), avoiding lower-screen UI obstructions (TikTok caption area, sound tickers, user handles) and right-side action buttons (likes, comments, share).
+- **Tailored Social Copy & Character Limits:**
+  - **YouTube Shorts:** 60-second duration compliance check, automated `#Shorts` title tags.
+  - **TikTok:** Automated `#fyp #viral` tags, 2,200-character caption limits, sound ticker notes.
+  - **Instagram Reels:** 90-second duration validation, hashtag spacing, clean mobile captions.
+  - **X (Twitter):** Strict 280-character maximum hook validation with hashtag truncation.
+  - **LinkedIn:** Executive takeaways formatting with professional key bullet points.
+- **1-Click Platform Kits (.zip):** Exports a creator package with the vertical `.mp4` video and dedicated formatted `.txt` files for every platform.
+- **Direct API Publisher:** Connects to YouTube Data API, TikTok Content Posting API, Instagram Graph API, Twitter API v2, and LinkedIn UGC API with interactive sandbox/live deployment reporting.
+
 ---
 
 ## 🏗️ Architecture & Pipeline Flow
 
 ```
 autochop/
-├── app.py                  # Gradio Blocks UI (3 Tabs, custom studio theme & CSS)
-├── config.py               # Constants, defaults, and ASS subtitle typography presets
+├── app.py                  # Gradio Blocks UI (4 Tabs, custom studio theme & CSS)
+├── config.py               # Constants, defaults, ASS presets, social platform rules
 ├── core/
 │   ├── audio.py            # Module 1: duration probing, 16kHz WAV extraction, silence inversion
 │   ├── transcription.py    # Module 2: faster-whisper worker, SRT rebasing, ASS burning
 │   ├── assembly.py         # Module 3: take slicing, concat demuxer, markdown manifest, zip bundle
-│   └── metadata.py         # Module 4: multi-provider AI hub & zero-key heuristic chapter generator
+│   ├── metadata.py         # Module 4: multi-provider AI hub & zero-key heuristic chapter generator
+│   ├── shorts.py           # Module 5: 9:16 vertical shorts generator with safe-zone subtitles
+│   └── social/             # Module 6: multi-platform connectors & publishing manager
+│       ├── base.py         # Base connector interface & data payloads
+│       ├── youtube_shorts.py # YouTube Shorts connector & 60s validation
+│       ├── tiktok.py       # TikTok connector & 2200-char caption limits
+│       ├── instagram.py    # Instagram Reels connector & 90s validation
+│       ├── twitter.py      # X (Twitter) connector & 280-char hook limits
+│       ├── linkedin.py     # LinkedIn connector & professional formatting
+│       └── manager.py      # SocialPublishManager & 1-click platform kit exporter
 ├── utils/
-│   ├── env_utils.py        # Secure .env persistence and multi-provider key validation
+│   ├── env_utils.py        # Secure .env persistence and social/LLM key validation
 │   ├── ffmpeg_utils.py     # Binary verification, subprocess executor, path escaping
 │   └── file_utils.py       # Session-scoped temp directories and zip packager
-├── tests/                  # Complete test suite (19 unit & integration tests)
+├── tests/                  # Complete test suite (30 unit & integration tests)
+│   ├── test_assembly.py    # Manifest and concatenation verification
+│   ├── test_audio.py       # Silence detection and boundary padding tests
+│   ├── test_integration.py # End-to-end synthetic video pipeline tests
+│   ├── test_metadata.py    # AI and heuristic YouTube chapters tests
+│   ├── test_shorts.py      # 9:16 vertical re-framing and safe-zone subtitle tests
+│   ├── test_social.py      # Multi-platform payload formatting and ZIP kit tests
+│   └── test_transcription.py # SRT rebasing and ASS subtitle burning tests
 ├── assets/                 # Brand thumbnails, hero banners, and media assets
 ├── requirements.txt        # Production dependencies
 ├── pyproject.toml          # Project configuration and metadata
@@ -480,12 +512,32 @@ http://localhost:7860
 
 ---
 
-### Tab 3: API Keys & Provider Settings
+### Tab 3: Shorts & Social Publisher
 
-1. Select your AI provider from the dropdown.
-2. Paste your API key (e.g., `nvapi-...`, `sk-...`, `gsk_...`).
-3. Click **💾 Save API Key**.
-4. The key is securely validated against provider format rules and saved into your local `.env` file (which is strictly ignored by Git and never committed).
+1. **Select Source Footage:**
+   - Choose `Master Rough Cut (from Tab 1)` to reframe the stitched cut.
+   - Choose `Selected Take (from Tab 1)` to turn a specific bite-sized take into a short.
+   - Or upload an external clip via `Upload Custom Video File`.
+2. **Configure Framing & Safe Zones:**
+   - **Reframing Technique:** Select `Blurred Background (Recommended)`, `Smart Center Crop`, or `Letterbox`.
+   - **Duration Limit:** Enforce `Under 60s (YouTube Shorts & TikTok)` or `Under 90s (Instagram Reels)`.
+   - **Mobile Safe-Zone Captions:** Check to burn ASS subtitles with high-contrast mobile typography positioned above lower-third UI controls (`MarginV=420`).
+3. **Generate Short:** Click **📱 Generate 9:16 Vertical Short** and preview immediately in the player.
+4. **Platform-Tailored Copywriting:**
+   - Click **📥 Import Metadata from Tab 2** to instantly sync titles, hook, and tags.
+   - Select target platforms (YouTube Shorts, TikTok, Instagram Reels, X, LinkedIn).
+   - Click **✨ Format Copy for Selected Platforms** to review app-specific previews and character counts.
+5. **Publish or Export Kit:**
+   - Click **🚀 Publish to Selected Social Platforms** for direct API dispatch with detailed live/sandbox reporting.
+   - Click **📦 Download Platform Kits (.zip)** for a complete package containing the vertical `.mp4`, per-platform text files (`youtube_shorts_copy.txt`, `tiktok_caption.txt`, etc.), and a posting guide checklist.
+
+---
+
+### Tab 4: API Keys & Provider Settings
+
+1. **LLM Inference Providers:** Configure and test keys for OpenAI, Google Gemini, Anthropic Claude, GroqCloud, xAI Grok, NVIDIA NIM, or Custom OpenCode/Ollama endpoints.
+2. **Social Media Connectors:** Configure OAuth tokens and API keys for YouTube Data API, TikTok Content Posting, Instagram Reels Graph API, X (Twitter) API v2, and LinkedIn UGC API.
+3. **Save & Persist:** Click individual **💾 Save** buttons or **💾 Save All Keys to .env** to persist credentials locally into `.env` with instant in-memory activation.
 
 ---
 
@@ -502,6 +554,8 @@ All core settings can be customized in the UI or modified globally in [config.py
 | `MIN_SPEECH_SEC` | `0.10 s` | `0.05` to `0.30 s` | Noise spikes shorter than this duration are rejected. |
 | `MERGE_GAP_SEC` | `0.20 s` | `0.10` to `0.40 s` | Breathing pauses between takes are merged to preserve natural flow. |
 | `WHISPER_MODEL` | `base` | `tiny` to `large-v3` | Model size for faster-whisper transcription engine. |
+| `DEFAULT_SHORTS_REFRAME_MODE` | `Blurred Background` | `blur_bg`, `crop`, `letterbox` | 9:16 vertical video re-framing algorithm. |
+| `DEFAULT_SHORTS_DURATION_OPTION` | `Under 60s` | `60s`, `90s`, `uncapped` | Maximum duration cut for vertical mobile reels/shorts. |
 
 ---
 
@@ -514,7 +568,18 @@ AutoChop includes a comprehensive automated test suite verifying every component
 pytest tests/ -v
 ```
 
-### Test Suite Breakdown (19 Tests)
+### Test Suite Breakdown (30 Tests - 100% Pass)
+- **`tests/test_shorts.py` (5 tests):**
+  - Validates ASS subtitle conversion with mobile safe-zone margins (`MarginV=420`).
+  - Verifies 9:16 blurred background, center crop, and letterbox filtergraph synthesis.
+  - Tests duration truncation caps (60s / 90s).
+- **`tests/test_social.py` (6 tests):**
+  - Tests YouTube Shorts 60s limit and `#Shorts` formatting.
+  - Tests TikTok 2,200-char caption limits, `#fyp` hashtags, and 9:16 aspect ratio validation.
+  - Tests Instagram Reels 90s validation and caption spacing.
+  - Tests X (Twitter) strict 280-character maximum hook validation.
+  - Tests LinkedIn professional takeaway bullet point structure.
+  - Verifies multi-platform creator kit `.zip` generation with tailored `.txt` files.
 - **`tests/test_audio.py` (7 tests):**
   - Validates silence inversion, safety boundary padding, micro-gap merging, noise rejection, and error handling for all-silent inputs.
 - **`tests/test_transcription.py` (4 tests):**

@@ -44,6 +44,12 @@ def load_all_keys() -> dict[str, str]:
         "OPENCODE_BASE_URL",
         "OPENCODE_API_KEY",
         "OPENCODE_MODEL",
+        "YOUTUBE_API_KEY",
+        "YOUTUBE_OAUTH_TOKEN",
+        "TIKTOK_ACCESS_TOKEN",
+        "INSTAGRAM_ACCESS_TOKEN",
+        "TWITTER_API_KEY",
+        "LINKEDIN_ACCESS_TOKEN",
     ]
 
     result: dict[str, str] = {}
@@ -83,7 +89,7 @@ def save_single_key(key_name: str, value: str) -> None:
 
 
 def save_key_for_provider(provider: str, api_key: str) -> bool:
-    """Maps provider name to corresponding environment key and persists it."""
+    """Maps provider or social platform name to corresponding environment key and persists it."""
     clean_p = provider.strip()
     key_map = {
         "OpenAI": "OPENAI_API_KEY",
@@ -93,6 +99,11 @@ def save_key_for_provider(provider: str, api_key: str) -> bool:
         "Grok (xAI)": "XAI_API_KEY",
         "NVIDIA NIM": "NVIDIA_API_KEY",
         "OpenCode / Custom Endpoint": "OPENCODE_API_KEY",
+        "YouTube Shorts": "YOUTUBE_OAUTH_TOKEN",
+        "TikTok": "TIKTOK_ACCESS_TOKEN",
+        "Instagram Reels": "INSTAGRAM_ACCESS_TOKEN",
+        "X (Twitter)": "TWITTER_API_KEY",
+        "LinkedIn": "LINKEDIN_ACCESS_TOKEN",
     }
     env_var = key_map.get(clean_p)
     if env_var and api_key:
@@ -102,23 +113,26 @@ def save_key_for_provider(provider: str, api_key: str) -> bool:
 
 
 def get_key_for_provider(provider: str) -> str:
-    """Returns the configured API key for the given provider string."""
+    """Returns the configured API key for the given provider or social platform string."""
     clean_p = provider.strip()
     keys = load_all_keys()
-
-    if clean_p == "OpenAI":
-        return keys.get("OPENAI_API_KEY", "")
-    elif clean_p == "Gemini":
-        return keys.get("GEMINI_API_KEY", "")
-    elif clean_p == "Anthropic (Claude)":
-        return keys.get("ANTHROPIC_API_KEY", "")
-    elif clean_p == "Groq (Ultra-Fast)":
-        return keys.get("GROQ_API_KEY", "")
-    elif clean_p == "Grok (xAI)":
-        return keys.get("XAI_API_KEY", "")
-    elif clean_p == "NVIDIA NIM":
-        return keys.get("NVIDIA_API_KEY", "")
-    elif clean_p == "OpenCode / Custom Endpoint":
-        return keys.get("OPENCODE_API_KEY", "")
+    key_map = {
+        "OpenAI": "OPENAI_API_KEY",
+        "Gemini": "GEMINI_API_KEY",
+        "Anthropic (Claude)": "ANTHROPIC_API_KEY",
+        "Groq (Ultra-Fast)": "GROQ_API_KEY",
+        "Grok (xAI)": "XAI_API_KEY",
+        "NVIDIA NIM": "NVIDIA_API_KEY",
+        "OpenCode / Custom Endpoint": "OPENCODE_API_KEY",
+        "YouTube Shorts": "YOUTUBE_OAUTH_TOKEN",
+        "TikTok": "TIKTOK_ACCESS_TOKEN",
+        "Instagram Reels": "INSTAGRAM_ACCESS_TOKEN",
+        "X (Twitter)": "TWITTER_API_KEY",
+        "LinkedIn": "LINKEDIN_ACCESS_TOKEN",
+    }
+    env_var = key_map.get(clean_p)
+    if env_var:
+        return keys.get(env_var, "")
     return ""
+
 
