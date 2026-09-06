@@ -1,0 +1,25 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "autochop"
+version = "2.0.0"
+description = "AutoChop AI Studio - Automated Post-Production Media Pipeline"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "cryptography<44",
+    "gradio>=4.0.0",
+    "faster-whisper>=1.0.0",
+    "google-genai>=0.3.0",
+    "openai>=1.30.0",
+    "anthropic>=1.0.0",
+    "python-dotenv>=1.0.0",
+    "static-ffmpeg>=2.5",
+    "pydantic>=2.0.0",
+]
+
+[tool.setuptools.packages.find]
+where = [".."]
+include = ["autochop*"]
