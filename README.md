@@ -19,19 +19,20 @@
 1. [Overview & Problem Statement](#-overview--problem-statement)
 2. [Key Features & Capabilities](#-key-features--capabilities)
 3. [Architecture & Pipeline Flow](#-architecture--pipeline-flow)
-4. [Installation & Prerequisites](#-installation--prerequisites)
+4. [Tech Stack & Package Usage](#-tech-stack--package-usage)
+5. [Installation & Prerequisites](#-installation--prerequisites)
    - [FFmpeg Setup (macOS / Linux / Windows)](#1-ffmpeg-setup)
    - [Python Environment Setup (uv & venv)](#2-python-environment-setup)
-5. [Step-by-Step Usage Guide](#-step-by-step-usage-guide)
+6. [Step-by-Step Usage Guide](#-step-by-step-usage-guide)
    - [Tab 1: Video Cuts & Captions](#tab-1-video-cuts--captions)
    - [Tab 2: Title & Chapter Studio](#tab-2-title--chapter-studio)
    - [Tab 3: API Keys & Provider Settings](#tab-3-api-keys--provider-settings)
-6. [Tunable Parameters & Configuration](#-tunable-parameters--configuration)
-7. [Testing & Quality Assurance](#-testing--quality-assurance)
-8. [Multi-Provider AI Hub & Offline Heuristics](#-multi-provider-ai-hub--offline-heuristics)
-9. [Troubleshooting & FAQs](#-troubleshooting--faqs)
-10. [Security & Privacy](#-security--privacy)
-11. [Acknowledgements & License](#-acknowledgements--license)
+7. [Tunable Parameters & Configuration](#-tunable-parameters--configuration)
+8. [Testing & Quality Assurance](#-testing--quality-assurance)
+9. [Multi-Provider AI Hub & Offline Heuristics](#-multi-provider-ai-hub--offline-heuristics)
+10. [Troubleshooting & FAQs](#-troubleshooting--faqs)
+11. [Security & Privacy](#-security--privacy)
+12. [Acknowledgements & License](#-acknowledgements--license)
 
 ---
 
@@ -136,6 +137,234 @@ flowchart TD
     L --> M[Titles, Description, Chapters & SEO Tags]
     I & K & M --> N[📦 Complete Creator Project Bundle .zip]
 ```
+
+---
+
+## 💻 Tech Stack & Package Usage
+
+AutoChop AI Studio is engineered using modern, production-grade Python libraries and multimedia utilities. Below is a comprehensive breakdown of each technology, its architectural purpose, and how it is implemented in the codebase.
+
+### 📊 Tech Stack Overview
+
+| Category | Technology / Package | Version | Architectural Purpose |
+| :--- | :--- | :--- | :--- |
+| **Media Processing** | `FFmpeg` / `FFprobe` | $\ge 5.0$ | Silence detection, audio extraction, keyframe slicing, concat demuxing, ASS subtitle burning |
+| **Speech Recognition** | `faster-whisper` | $\ge 1.0.0$ | CTranslate2-accelerated Whisper transcription with Silero VAD filtering |
+| **Web Interface** | `gradio` | $\ge 4.0.0$ | Interactive Blocks studio, video streaming, reactive state, custom UI theme |
+| **Universal AI Adapter** | `openai` | $\ge 1.30.0$ | Universal OpenAI-compatible inference for OpenAI, NVIDIA NIM, Groq, xAI Grok, and Ollama |
+| **Gemini AI Engine** | `google-genai` | $\ge 0.3.0$ | Native Google Gemini 1.5 Flash and Pro API integration |
+| **Anthropic AI Engine** | `anthropic` | $\ge 1.0.0$ | Native Claude 3.5 Sonnet and Haiku API integration |
+| **Data Validation** | `pydantic` | $\ge 2.0.0$ | Metadata schema enforcement, chapter time formatting, and JSON validation |
+| **Secrets & Security** | `python-dotenv` / `cryptography` | $\ge 1.0.0$ | Local `.env` credential persistence and in-memory key encryption |
+| **Testing & QA** | `pytest` | $\ge 8.0.0$ | Automated test suite with synthetic audio/video generation fixtures |
+
+---
+
+### 📦 Package-by-Package Deep Dive & Code Usage
+
+#### 1. `faster-whisper` (Fast Speech-to-Text with CTranslate2)
+- **Why It's Used:** Standard Whisper can be slow and memory-intensive on CPU. `faster-whisper` uses CTranslate2 with `int8` quantization to deliver **up to 4x faster execution** with 60% less RAM, making it suitable for local creator workflows without dedicated GPUs.
+- **How It's Used in AutoChop:**
+  ```python
+  from faster_whisper import WhisperModel
+
+  # Initialize model on CPU with int8 quantization (model weights are cached locally)
+  model = WhisperModel(model_size_or_path="base", device="cpu", compute_type="int8")
+
+  # Transcribe 16kHz audio with Silero Voice Activity Detection (VAD) filter
+  segments, info = model.transcribe(
+      audio="session_audio.wav",
+      beam_size=5,
+      word_timestamps=True,
+      vad_filter=True,
+      vad_parameters=dict(min_silence_duration_ms=500),
+  )
+
+  # Extract word-level timestamps for subtitle alignment
+  for segment in segments:
+      print(f"[{segment.start:.2f}s -> {segment.end:.2f}s] {segment.text}")
+  ```
+
+---
+
+#### 2. `gradio` (Modern Reactive Web Application)
+- **Why It's Used:** Provides a reactive web GUI with built-in video players, sliders, file dropzones, tabs, and client-side clipboard actions without needing a complex Node.js/React build setup.
+- **How It's Used in AutoChop:**
+  ```python
+  import gradio as gr
+
+  # Custom Studio Theme tokens matching the light minimalist aesthetic
+  STUDIO_THEME = gr.themes.Default(primary_hue="orange", neutral_hue="slate").set(
+      body_background_fill="#f8fafc",
+      block_background_fill="#ffffff",
+      button_primary_background_fill="linear-gradient(135deg, #ff6b2b 0%, #ea580c 100%)",
+  )
+
+  with gr.Blocks(title="AutoChop AI Studio", theme=STUDIO_THEME, css=CUSTOM_CSS) as demo:
+      # Session-scoped state across tabs
+      state_takes = gr.State({})
+      state_transcript = gr.State("")
+
+      with gr.Tabs():
+          with gr.TabItem("✂️ Video Cuts & Captions"):
+              input_video = gr.Video(label="Upload Raw Video", sources=["upload"])
+              btn_process = gr.Button("🎬 Cut, Transcribe & Burn", variant="primary")
+              out_master = gr.Video(label="Master Jump-Cut Rough Video")
+
+      # Wire reactive processing event
+      btn_process.click(
+          fn=process_video_pipeline,
+          inputs=[input_video],
+          outputs=[out_master, state_takes, state_transcript],
+      )
+  ```
+
+---
+
+#### 3. `FFmpeg & FFprobe` (Multimedia Processing Engine)
+- **Why It's Used:** Industry-standard binary engine for high-performance audio waveform analysis, zero-loss stream copy concatenation, and ASS subtitle burning.
+- **How It's Used in AutoChop:**
+  - **Silence Detection Filter (`silencedetect`):**
+    ```bash
+    ffmpeg -i input.wav -af "silencedetect=noise=-30dB:d=0.5" -f null -
+    ```
+  - **Fast Take Slicing with PTS Reset:**
+    ```bash
+    ffmpeg -y -ss 00:01:12.500 -to 00:01:25.800 -i raw_footage.mp4 \
+      -vf "setpts=PTS-STARTPTS" -af "asetpts=PTS-STARTPTS" \
+      -c:v libx264 -preset veryfast -crf 20 -c:a aac take_001.mp4
+    ```
+  - **High-Contrast Subtitle Burning (`libass`):**
+    ```bash
+    ffmpeg -y -i take_001.mp4 -vf "ass=subtitles.ass" -c:a copy take_001_burned.mp4
+    ```
+  - **Zero-Transcode Master Jump-Cut Concatenation:**
+    ```bash
+    ffmpeg -y -f concat -safe 0 -i concat_manifest.txt -c copy master_rough_cut.mp4
+    ```
+
+---
+
+#### 4. `openai` (Universal AI & Inference Client)
+- **Why It's Used:** Serves as a universal standard adapter that connects not only to OpenAI, but also to **NVIDIA NIM**, **Groq Cloud**, **xAI Grok**, **Ollama**, and **OpenCode** by changing only the `base_url` and `api_key`.
+- **How It's Used in AutoChop:**
+  ```python
+  from openai import OpenAI
+
+  # Example: Connecting to NVIDIA NIM Microservices
+  client = OpenAI(
+      base_url="https://integrate.api.nvidia.com/v1",
+      api_key="nvapi-your-key-here",
+  )
+
+  response = client.chat.completions.create(
+      model="meta/llama-3.3-70b-instruct",
+      messages=[
+          {"role": "system", "content": "You are a professional YouTube post-production metadata strategist."},
+          {"role": "user", "content": f"Generate 5 CTR titles and chapters for this transcript:\n\n{transcript}"},
+      ],
+      response_format={"type": "json_object"},
+      temperature=0.7,
+  )
+  metadata = response.choices[0].message.content
+  ```
+
+---
+
+#### 5. `google-genai` (Google Gemini 1.5 Flash & Pro)
+- **Why It's Used:** Provides high-token-context analysis for long, multi-hour video transcripts using Gemini 1.5's massive context window.
+- **How It's Used in AutoChop:**
+  ```python
+  from google import genai
+
+  client = genai.Client(api_key="AIzaSy...")
+
+  response = client.models.generate_content(
+      model="gemini-1.5-flash",
+      contents=f"Generate YouTube title options and chapters for:\n{transcript}",
+  )
+  print(response.text)
+  ```
+
+---
+
+#### 6. `anthropic` (Anthropic Claude 3.5 Sonnet / Haiku)
+- **Why It's Used:** Renowned for nuanced, non-cliché copywriting and high-converting YouTube video titles and description hooks.
+- **How It's Used in AutoChop:**
+  ```python
+  import anthropic
+
+  client = anthropic.Anthropic(api_key="sk-ant-...")
+
+  message = client.messages.create(
+      model="claude-3-5-sonnet-latest",
+      max_tokens=1024,
+      system="You are an elite YouTube editor and copywriter.",
+      messages=[{"role": "user", "content": f"Create metadata for:\n{transcript}"}],
+  )
+  print(message.content[0].text)
+  ```
+
+---
+
+#### 7. `pydantic` (Data Validation & Schema Enforcement)
+- **Why It's Used:** Guarantees that AI-generated responses strictly conform to required fields (e.g., exactly 5 titles, valid chapter format) before being returned to the UI.
+- **How It's Used in AutoChop:**
+  ```python
+  from pydantic import BaseModel, Field
+
+  class YouTubeMetadataSchema(BaseModel):
+      titles: list[str] = Field(..., min_length=5, description="5 high-CTR video title options")
+      hook_description: str = Field(..., description="2-sentence description hook")
+      chapters: list[str] = Field(..., description="Timestamped YouTube chapters starting at 00:00")
+      tags: list[str] = Field(..., description="SEO comma-separated tags")
+
+  # Validate incoming raw JSON string
+  validated = YouTubeMetadataSchema.model_validate_json(raw_ai_json)
+  ```
+
+---
+
+#### 8. `python-dotenv` & `cryptography` (Secrets Protection)
+- **Why It's Used:** Ensures API keys are saved locally on disk in `.env` across browser restarts while strictly protecting keys from accidental Git exposure via `.gitignore`.
+- **How It's Used in AutoChop:**
+  ```python
+  from dotenv import load_dotenv, set_key
+  from pathlib import Path
+
+  # Load existing keys from local .env
+  env_path = Path(".env")
+  load_dotenv(dotenv_path=env_path)
+
+  # Securely save or update an API key in .env
+  def save_provider_key(provider_key_name: str, key_value: str):
+      if not env_path.exists():
+          env_path.touch(mode=0o600)  # User read/write only permissions
+      set_key(str(env_path), provider_key_name, key_value)
+  ```
+
+---
+
+#### 9. `pytest` (Automated Synthetic Testing Suite)
+- **Why It's Used:** Provides automated regression testing without needing manual video uploads by synthesizing test videos programmatically through FFmpeg's `testsrc` and `sine` filters.
+- **How It's Used in AutoChop:**
+  ```python
+  import pytest
+  import subprocess
+
+  @pytest.fixture
+  def synthetic_video(tmp_path):
+      """Generates a 6-second video with calibrated audio beeps and silences."""
+      video_path = tmp_path / "synthetic_test.mp4"
+      cmd = [
+          "ffmpeg", "-y",
+          "-f", "lavfi", "-i", "testsrc=duration=6:size=320x240:rate=30",
+          "-f", "lavfi", "-i", "sine=frequency=1000:duration=2",
+          "-c:v", "libx264", "-c:a", "aac", str(video_path),
+      ]
+      subprocess.run(cmd, check=True)
+      return video_path
+  ```
 
 ---
 
