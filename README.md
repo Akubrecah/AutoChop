@@ -1,5 +1,9 @@
 # ⚡ AutoChop AI Studio (v2)
 
+<p align="center">
+  <img src="assets/thumbnail.jpg" alt="AutoChop AI Studio Banner" width="100%" />
+</p>
+
 Production-quality automated video post-production studio built with Python, FFmpeg, faster-whisper, and Gradio.
 
 AutoChop automates the most tedious aspects of a creator's workflow:
