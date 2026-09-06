@@ -615,14 +615,245 @@ def get_raw_tags(tags_md: str) -> str:
     return tags_line
 
 
-# Build Gradio UI
+# Build Gradio UI with Studio Theme matching thumbnail
+STUDIO_THEME = gr.themes.Default(
+    primary_hue="orange",
+    secondary_hue="slate",
+    neutral_hue="slate",
+    font=[gr.themes.GoogleFont("Inter"), "system-ui", "-apple-system", "sans-serif"],
+    font_mono=[gr.themes.GoogleFont("JetBrains Mono"), "monospace"],
+).set(
+    body_background_fill="#f8fafc",
+    body_text_color="#0f172a",
+    body_text_color_subdued="#64748b",
+    background_fill_primary="#ffffff",
+    background_fill_secondary="#f1f5f9",
+    border_color_primary="#e2e8f0",
+    block_background_fill="#ffffff",
+    block_border_width="1px",
+    block_border_color="#e2e8f0",
+    block_shadow="0 4px 14px -2px rgba(0, 0, 0, 0.04), 0 2px 6px -1px rgba(0, 0, 0, 0.02)",
+    block_radius="14px",
+    button_primary_background_fill="linear-gradient(135deg, #ff6b2b 0%, #ea580c 100%)",
+    button_primary_background_fill_hover="linear-gradient(135deg, #ea580c 0%, #c2410c 100%)",
+    button_primary_text_color="#ffffff",
+    button_primary_border_color="#ea580c",
+    button_large_radius="12px",
+    button_large_padding="14px 22px",
+    slider_color="#ea580c",
+)
+
 CUSTOM_CSS = """
-.container { max-width: 1280px; margin: 0 auto; }
-.hero-header { text-align: center; margin-bottom: 20px; }
-.hero-header h1 { font-size: 2.2rem; font-weight: 800; margin-bottom: 6px; }
-.hero-header p { font-size: 1.05rem; opacity: 0.8; }
-.status-box { padding: 10px 14px; border-radius: 8px; margin-bottom: 12px; font-weight: 500; }
+/* App Layout & Canvas */
+.gradio-container {
+    max-width: 1320px !important;
+    margin: 0 auto !important;
+    padding: 24px 20px !important;
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif !important;
+}
+
+/* Hero Section matching thumbnail */
+.hero-wrapper {
+    text-align: center !important;
+    margin-bottom: 24px !important;
+    padding: 8px 0 16px 0 !important;
+}
+
+.hero-badges-row {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    gap: 12px;
+    margin-bottom: 14px;
+    flex-wrap: wrap;
+}
+
+.tech-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 15px;
+    border-radius: 9999px;
+    background: #ffffff;
+    border: 1px solid #e2e8f0;
+    box-shadow: 0 2px 6px -1px rgba(0, 0, 0, 0.04);
+    font-size: 0.84rem;
+    font-weight: 650;
+    color: #334155;
+    transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.tech-badge:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 6px 16px -2px rgba(0, 0, 0, 0.08);
+    border-color: #cbd5e1;
+    color: #0f172a;
+}
+
+.badge-icon {
+    display: inline-block;
+    font-size: 0.95rem;
+}
+
+.hero-title-container {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 12px;
+    margin-bottom: 8px;
+}
+
+.hero-lightning-badge {
+    font-size: 2.5rem;
+    filter: drop-shadow(0 2px 8px rgba(245, 158, 11, 0.4));
+    animation: pulse-glow 3s ease-in-out infinite;
+    display: inline-block;
+}
+
+@keyframes pulse-glow {
+    0%, 100% { transform: scale(1); filter: drop-shadow(0 2px 8px rgba(245, 158, 11, 0.4)); }
+    50% { transform: scale(1.06); filter: drop-shadow(0 4px 14px rgba(245, 158, 11, 0.65)); }
+}
+
+.hero-title {
+    font-size: 2.6rem !important;
+    font-weight: 850 !important;
+    color: #0f172a !important;
+    letter-spacing: -0.035em !important;
+    margin: 0 !important;
+    line-height: 1.2 !important;
+}
+
+.hero-subtitle {
+    font-size: 1.05rem !important;
+    color: #64748b !important;
+    max-width: 760px;
+    margin: 8px auto 0 auto !important;
+    line-height: 1.55 !important;
+    font-weight: 450 !important;
+}
+
+/* Tabs Navigation matching thumbnail */
+div.tabs > div.tab-nav {
+    border-bottom: 1px solid #e2e8f0 !important;
+    background: transparent !important;
+    gap: 8px !important;
+    margin-bottom: 18px !important;
+    padding-bottom: 0 !important;
+}
+
+div.tabs > div.tab-nav > button {
+    font-size: 0.98rem !important;
+    font-weight: 600 !important;
+    color: #64748b !important;
+    border: none !important;
+    border-bottom: 3px solid transparent !important;
+    border-radius: 8px 8px 0 0 !important;
+    padding: 11px 18px !important;
+    background: transparent !important;
+    transition: all 0.2s ease !important;
+}
+
+div.tabs > div.tab-nav > button:hover {
+    color: #0f172a !important;
+    background: rgba(241, 245, 249, 0.6) !important;
+}
+
+div.tabs > div.tab-nav > button.selected {
+    color: #ea580c !important;
+    border-bottom: 3px solid #ea580c !important;
+    background: rgba(234, 88, 12, 0.05) !important;
+    font-weight: 750 !important;
+}
+
+/* Card Blocks Elevation */
+div[class*="block"] {
+    border-radius: 14px !important;
+    border-color: #e2e8f0 !important;
+    box-shadow: 0 4px 14px -2px rgba(0, 0, 0, 0.04) !important;
+    transition: box-shadow 0.2s ease, border-color 0.2s ease !important;
+}
+
+/* Primary Action Buttons */
+button.primary, button[variant="primary"] {
+    background: linear-gradient(135deg, #ff6b2b 0%, #ea580c 100%) !important;
+    color: #ffffff !important;
+    border: none !important;
+    font-size: 1.05rem !important;
+    font-weight: 750 !important;
+    border-radius: 12px !important;
+    padding: 14px 22px !important;
+    box-shadow: 0 4px 14px rgba(234, 88, 12, 0.35) !important;
+    letter-spacing: -0.01em !important;
+    cursor: pointer !important;
+    transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1) !important;
+}
+
+button.primary:hover, button[variant="primary"]:hover {
+    background: linear-gradient(135deg, #ea580c 0%, #c2410c 100%) !important;
+    transform: translateY(-2px) !important;
+    box-shadow: 0 8px 22px rgba(234, 88, 12, 0.45) !important;
+}
+
+button.primary:active, button[variant="primary"]:active {
+    transform: translateY(0) !important;
+    box-shadow: 0 2px 6px rgba(234, 88, 12, 0.25) !important;
+}
+
+/* Secondary Buttons */
+button.secondary, button[variant="secondary"] {
+    background: #ffffff !important;
+    border: 1px solid #cbd5e1 !important;
+    color: #334155 !important;
+    font-weight: 600 !important;
+    border-radius: 10px !important;
+    transition: all 0.2s ease !important;
+}
+
+button.secondary:hover, button[variant="secondary"]:hover {
+    background: #f8fafc !important;
+    border-color: #94a3b8 !important;
+    color: #0f172a !important;
+    transform: translateY(-1px) !important;
+}
+
+/* Video Containers */
+.video-container, .gr-video {
+    border-radius: 14px !important;
+    overflow: hidden !important;
+    border: 1px solid #e2e8f0 !important;
+    box-shadow: 0 4px 12px -2px rgba(0, 0, 0, 0.05) !important;
+}
+
+/* Sliders */
+input[type="range"] {
+    accent-color: #ea580c !important;
+}
+
+/* Form Controls & Inputs */
+input[type="text"], input[type="password"], textarea, select {
+    border-radius: 10px !important;
+    border: 1px solid #cbd5e1 !important;
+    transition: border-color 0.2s ease, box-shadow 0.2s ease !important;
+}
+
+input[type="text"]:focus, input[type="password"]:focus, textarea:focus, select:focus {
+    border-color: #ea580c !important;
+    box-shadow: 0 0 0 3px rgba(234, 88, 12, 0.15) !important;
+    outline: none !important;
+}
+
+/* Status & Alert Boxes */
+.status-box {
+    padding: 12px 16px;
+    border-radius: 10px;
+    margin-bottom: 12px;
+    font-weight: 600;
+    font-size: 0.92rem;
+    border: 1px solid transparent;
+}
 """
+
 
 def build_app() -> gr.Blocks:
     """Constructs and returns the Gradio Blocks application."""
@@ -634,11 +865,23 @@ def build_app() -> gr.Blocks:
         state_duration = gr.State(0.0)
 
         # Header
-        with gr.Column(elem_classes=["hero-header"]):
-            gr.Markdown(
-                "# ⚡ AutoChop AI Studio\n"
-                "Automated post-production studio: dead-air stripping, faster-whisper transcription, "
-                "styled social captions, jump-cut assembly & YouTube chapter studio."
+        with gr.Column(elem_classes=["hero-wrapper"]):
+            gr.HTML(
+                """
+                <div class="hero-badges-row">
+                    <span class="tech-badge"><span class="badge-icon">⚡</span> FFmpeg</span>
+                    <span class="tech-badge"><span class="badge-icon">🎙️</span> faster-whisper</span>
+                    <span class="tech-badge"><span class="badge-icon">🤖</span> AI Post-Production</span>
+                </div>
+                <div class="hero-title-container">
+                    <span class="hero-lightning-badge">⚡</span>
+                    <h1 class="hero-title">AutoChop AI Studio</h1>
+                </div>
+                <p class="hero-subtitle">
+                    Automated post-production studio: dead-air stripping, faster-whisper transcription,
+                    styled social captions, jump-cut assembly & YouTube chapter studio.
+                </p>
+                """
             )
             if not FFMPEG_AVAILABLE:
                 gr.Markdown(f"> [!WARNING]\n> {FFMPEG_STATUS_MSG}")
@@ -1121,7 +1364,7 @@ def main():
         server_name="0.0.0.0",
         server_port=port,
         share=False,
-        theme=gr.themes.Default(),
+        theme=STUDIO_THEME,
         css=CUSTOM_CSS,
         allowed_paths=allowed_dirs,
     )
