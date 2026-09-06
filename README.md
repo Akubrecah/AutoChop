@@ -100,3 +100,18 @@ The test suite includes:
 - `test_assembly.py`: Edit manifest generation and table formatting.
 - `test_metadata.py`: Zero-key heuristic generation and YouTube chapter requirements compliance.
 - `test_integration.py`: Programmatically synthesizes an audio/video clip using FFmpeg and runs the complete pipeline end-to-end.
+
+---
+
+## 📜 Acknowledgements & Attributions
+
+AutoChop AI Studio is built with respect for open-source engineering:
+- **[FFmpeg](https://ffmpeg.org/)** — Industry-standard multimedia engine for audio filtering, stream demuxing, and keyframe-accurate video concatenation.
+- **[faster-whisper](https://github.com/SYSTRAN/faster-whisper)** — CTranslate2 reimplementation of OpenAI's Whisper model for ultra-fast on-device automatic speech recognition.
+- **[Gradio](https://github.com/gradio-app/gradio)** — Modern web framework for interactive machine learning applications.
+
+---
+
+## 📄 License
+
+This project is licensed under the **MIT License** — see the [LICENSE](file:///Users/Akubrecah/Desktop/HACKATHONS/autochop/LICENSE) file for details.
