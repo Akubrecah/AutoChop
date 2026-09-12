@@ -13,6 +13,7 @@ from typing import Any
 
 from autochop.core.social.base import BaseSocialConnector, PlatformPostPayload, PublishResult
 from autochop.utils.ffmpeg_utils import probe_media_info
+from autochop.utils.http_client import http_post, http_put
 
 logger = logging.getLogger("autochop.social.youtube")
 
@@ -119,39 +120,116 @@ class YouTubeShortsConnector(BaseSocialConnector):
                 error_details=err,
             )
 
-        api_key = os.getenv("YOUTUBE_API_KEY") or os.getenv("GOOGLE_API_KEY")
         access_token = os.getenv("YOUTUBE_OAUTH_TOKEN")
+        if not access_token:
+            return PublishResult(
+                success=False,
+                platform=self.platform_name,
+                message=(
+                    "Action required: YOUTUBE_OAUTH_TOKEN is required for direct YouTube publishing. "
+                    "Please configure it in Settings."
+                ),
+                error_details="Missing YOUTUBE_OAUTH_TOKEN",
+            )
 
-        # If live credentials exist, attempt real API upload; otherwise provide clean verified package
-        if access_token or api_key:
-            logger.info(f"Uploading to YouTube Data API: {payload.title}")
-            try:
-                # Direct API integration hook
-                import requests
-                # Live dispatch or mock preview if token unauthenticated
-                headers = {"Authorization": f"Bearer {access_token}"} if access_token else {}
-                # Mock or live response
-                return PublishResult(
-                    success=True,
-                    platform=self.platform_name,
-                    message=f"Ready for YouTube Shorts: '{payload.title}' ({payload.privacy}). Video validated.",
-                    post_id="yt_simulated_id_001",
-                    post_url="https://youtube.com/shorts/",
-                )
-            except Exception as exc:
-                logger.error(f"YouTube API upload error: {exc}")
+        logger.info(f"Starting YouTube Data API v3 resumable upload for: {payload.title}")
+        try:
+            file_size = path.stat().st_size
+            init_url = (
+                "https://www.googleapis.com/upload/youtube/v3/videos"
+                "?uploadType=resumable&part=snippet,status"
+            )
+            init_headers = {
+                "Authorization": f"Bearer {access_token}",
+                "Content-Type": "application/json; charset=UTF-8",
+                "X-Upload-Content-Type": "video/mp4",
+                "X-Upload-Content-Length": str(file_size),
+            }
+            init_body = {
+                "snippet": {
+                    "title": payload.title,
+                    "description": payload.body,
+                    "tags": payload.tags,
+                    "categoryId": payload.custom_fields.get("category_id", "22"),
+                },
+                "status": {
+                    "privacyStatus": payload.privacy.lower() if payload.privacy else "public",
+                    "selfDeclaredMadeForKids": False,
+                },
+            }
+
+            # Step 1: Initialize resumable upload session
+            init_resp = http_post(init_url, headers=init_headers, json_data=init_body, timeout=30)
+            if init_resp.status_code != 200:
+                err_msg = init_resp.text
+                try:
+                    err_msg = init_resp.json().get("error", {}).get("message", err_msg)
+                except Exception:
+                    pass
+                logger.error(f"YouTube upload session init failed ({init_resp.status_code}): {err_msg}")
                 return PublishResult(
                     success=False,
                     platform=self.platform_name,
-                    message=f"YouTube upload error: {exc}",
-                    error_details=str(exc),
+                    message=f"YouTube session creation failed ({init_resp.status_code}): {err_msg}",
+                    error_details=err_msg,
                 )
 
-        return PublishResult(
-            success=True,
-            platform=self.platform_name,
-            message=(
-                f"YouTube Shorts metadata generated and video validated ({path.name}). "
-                "Add YOUTUBE_OAUTH_TOKEN in Settings to enable direct cloud dispatch."
-            ),
-        )
+            upload_url = init_resp.headers.get("Location") or init_resp.headers.get("location")
+            if not upload_url:
+                return PublishResult(
+                    success=False,
+                    platform=self.platform_name,
+                    message="YouTube did not return a resumable upload Location header.",
+                    error_details="Missing Location header in YouTube init response",
+                )
+
+            # Step 2: Upload video binary data
+            upload_headers = {
+                "Content-Type": "video/mp4",
+                "Content-Length": str(file_size),
+            }
+            with open(path, "rb") as f:
+                upload_resp = http_put(upload_url, headers=upload_headers, data=f.read(), timeout=300)
+
+            if upload_resp.status_code not in (200, 201):
+                err_msg = upload_resp.text
+                try:
+                    err_msg = upload_resp.json().get("error", {}).get("message", err_msg)
+                except Exception:
+                    pass
+                logger.error(f"YouTube video chunk upload failed ({upload_resp.status_code}): {err_msg}")
+                return PublishResult(
+                    success=False,
+                    platform=self.platform_name,
+                    message=f"YouTube video upload failed ({upload_resp.status_code}): {err_msg}",
+                    error_details=err_msg,
+                )
+
+            res_json = upload_resp.json()
+            video_id = res_json.get("id")
+            if not video_id:
+                return PublishResult(
+                    success=False,
+                    platform=self.platform_name,
+                    message="YouTube upload succeeded but video ID was not found in response.",
+                    error_details=str(res_json),
+                )
+
+            video_url = f"https://youtube.com/shorts/{video_id}"
+            logger.info(f"Successfully published to YouTube Shorts: {video_url}")
+            return PublishResult(
+                success=True,
+                platform=self.platform_name,
+                message=f"Successfully published to YouTube Shorts: '{payload.title}'",
+                post_id=video_id,
+                post_url=video_url,
+            )
+
+        except Exception as exc:
+            logger.error(f"YouTube upload error: {exc}")
+            return PublishResult(
+                success=False,
+                platform=self.platform_name,
+                message=f"YouTube upload error: {exc}",
+                error_details=str(exc),
+            )

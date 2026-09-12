@@ -13,6 +13,7 @@ from typing import Any
 
 from autochop.core.social.base import BaseSocialConnector, PlatformPostPayload, PublishResult
 from autochop.utils.ffmpeg_utils import probe_media_info
+from autochop.utils.http_client import http_post, http_put
 
 logger = logging.getLogger("autochop.social.tiktok")
 
@@ -98,21 +99,108 @@ class TikTokConnector(BaseSocialConnector):
             )
 
         token = os.getenv("TIKTOK_ACCESS_TOKEN")
-        if token:
-            logger.info(f"Dispatching to TikTok Content Posting API: {payload.title}")
+        if not token:
+            return PublishResult(
+                success=False,
+                platform=self.platform_name,
+                message=(
+                    "Action required: TIKTOK_ACCESS_TOKEN is required for direct TikTok publishing. "
+                    "Please configure it in Settings."
+                ),
+                error_details="Missing TIKTOK_ACCESS_TOKEN",
+            )
+
+        logger.info(f"Initiating TikTok Content Posting API v2 upload for: {payload.title}")
+        try:
+            file_size = path.stat().st_size
+            init_url = "https://open.tiktokapis.com/v2/post/publish/video/init/"
+            init_headers = {
+                "Authorization": f"Bearer {token}",
+                "Content-Type": "application/json; charset=UTF-8",
+            }
+            privacy_map = {
+                "public": "PUBLIC_TO_EVERYONE",
+                "private": "SELF_ONLY",
+                "friends": "MUTUAL_FOLLOW_FRIENDS",
+            }
+            tiktok_privacy = privacy_map.get((payload.privacy or "public").lower(), "PUBLIC_TO_EVERYONE")
+
+            init_body = {
+                "post_info": {
+                    "title": payload.full_post_text[:2200],
+                    "privacy_level": tiktok_privacy,
+                    "disable_duet": payload.custom_fields.get("disable_duet", False),
+                    "disable_comment": payload.custom_fields.get("disable_comments", False),
+                    "disable_stitch": payload.custom_fields.get("disable_stitch", False),
+                    "video_cover_timestamp_ms": 1000,
+                },
+                "source_info": {
+                    "source": "FILE_UPLOAD",
+                    "video_size": file_size,
+                    "chunk_size": file_size,
+                    "total_chunk_count": 1,
+                },
+            }
+
+            # Step 1: Initialize publish request
+            init_resp = http_post(init_url, headers=init_headers, json_data=init_body, timeout=30)
+            if init_resp.status_code != 200:
+                err_msg = init_resp.text
+                try:
+                    err_msg = init_resp.json().get("error", {}).get("message", err_msg)
+                except Exception:
+                    pass
+                logger.error(f"TikTok post init failed ({init_resp.status_code}): {err_msg}")
+                return PublishResult(
+                    success=False,
+                    platform=self.platform_name,
+                    message=f"TikTok post init failed ({init_resp.status_code}): {err_msg}",
+                    error_details=err_msg,
+                )
+
+            data = init_resp.json().get("data", {})
+            publish_id = data.get("publish_id")
+            upload_url = data.get("upload_url")
+            if not upload_url:
+                return PublishResult(
+                    success=False,
+                    platform=self.platform_name,
+                    message="TikTok init did not return an upload_url.",
+                    error_details=str(data),
+                )
+
+            # Step 2: Upload video binary data
+            upload_headers = {
+                "Content-Type": "video/mp4",
+                "Content-Length": str(file_size),
+                "Content-Range": f"bytes 0-{file_size - 1}/{file_size}",
+            }
+            with open(path, "rb") as f:
+                upload_resp = http_put(upload_url, headers=upload_headers, data=f.read(), timeout=300)
+
+            if upload_resp.status_code not in (200, 201):
+                return PublishResult(
+                    success=False,
+                    platform=self.platform_name,
+                    message=f"TikTok binary upload failed ({upload_resp.status_code}): {upload_resp.text}",
+                    error_details=upload_resp.text,
+                )
+
+            post_url = f"https://www.tiktok.com/@me"
+            logger.info(f"Successfully published to TikTok API: publish_id={publish_id}")
             return PublishResult(
                 success=True,
                 platform=self.platform_name,
-                message=f"Prepared for TikTok Content Posting API. Video {path.name} validated.",
-                post_id="tt_simulated_id_002",
-                post_url="https://www.tiktok.com/",
+                message=f"Successfully submitted to TikTok Content Posting API (ID: {publish_id})",
+                post_id=publish_id,
+                post_url=post_url,
             )
 
-        return PublishResult(
-            success=True,
-            platform=self.platform_name,
-            message=(
-                f"TikTok caption and 9:16 video ready ({len(payload.full_post_text)} chars). "
-                "Add TIKTOK_ACCESS_TOKEN in Settings to enable direct cloud publishing."
-            ),
-        )
+        except Exception as exc:
+            logger.error(f"TikTok upload error: {exc}")
+            return PublishResult(
+                success=False,
+                platform=self.platform_name,
+                message=f"TikTok upload error: {exc}",
+                error_details=str(exc),
+            )
